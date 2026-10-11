@@ -1,43 +1,8 @@
-Description: aic8800_fdrv (USB): reset the device when the firmware stops answering a command
- A command the firmware does not answer within RWNX_80211_CMD_TIMEOUT_MS marks the command manager
- RWNX_CMD_MGR_STATE_CRASHED, and nothing clears that but loading the driver again: every later command
- fails at once with -EPIPE ("cmd queue crashed"), so one late answer takes the radio off the network
- until someone reloads the driver or reboots.
- .
- Instead, ask the USB core to reset the device (usb_queue_reset_device): the driver is unbound, the port
- reset, the driver bound again and the firmware loaded afresh. On an AIC8800DC (a69c:88dc) the station
- interface is back and reaching its router 5 to 9 seconds after the timeout. At most once a minute and
- three times in ten minutes; a chip that keeps failing is left crashed, for whatever watches the system.
- .
- Module parameters: recover_on_timeout (default 1; 0 keeps the old behaviour) and, for testing,
- fake_cmd_timeout (writable at run time: the next N commands count as timed out), so the recovery can
- be tried without waiting for a real firmware stall; and, read-only, recoveries (how many resets were
- asked for) and recovered_at (when the last was, in seconds since boot, as /proc/uptime), so whatever
- watches the system can leave the radio to the driver while it comes back, without depending on the
- kernel log line, which a busy log can overwrite within seconds.
- .
- Tested on a Luckfox Lyra Zero W (RK3506, AIC8800DC on USB): a real stall, provoked by moving the
- station between access points on three channels every 30 s while the AP interface served a client
- (an SM_DISCONNECT_REQ timed out), was reset by the driver and the station back on its network in 54 s.
- .
- Interfaces the driver does not create again by itself (a hotspot's AP interface, say) have to be
- brought back from user space after the reset.
+Description: aic8800_fdrv (USB): drop a timed-out command from the queue and reset the device, at most once a minute
 Author: NomDeTom
 Forwarded: no
-Last-Update: 2026-10-10
+Last-Update: 2026-10-11
 ---
-Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
-===================================================================
---- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
-+++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
-@@ -117,6 +117,7 @@
-     struct rwnx_hw *rwnx_hw;
-     struct aicwf_bus *bus_if;
-     struct usb_device *udev;
-+    struct usb_interface *intf;   /* for a reset when the firmware stops answering (rwnx_cmds.c) */
-     struct device *dev;
-     struct aicwf_rx_priv* rx_priv;
-     enum aicwf_usb_state state;
 Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.c
 ===================================================================
 --- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.c
@@ -50,125 +15,106 @@ Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.c
      usb_dev->dev = &usb->dev;
      usb_set_intfdata(intf, usb_dev);
  
+Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
+===================================================================
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.h
+@@ -117,6 +117,7 @@
+     struct rwnx_hw *rwnx_hw;
+     struct aicwf_bus *bus_if;
+     struct usb_device *udev;
++    struct usb_interface *intf;
+     struct device *dev;
+     struct aicwf_rx_priv* rx_priv;
+     enum aicwf_usb_state state;
 Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
 ===================================================================
 --- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
 +++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
-@@ -24,6 +24,71 @@
- #include "aicwf_sdio.h"
- #else
- #include "aicwf_usb.h"
-+
-+#ifdef AICWF_USB_SUPPORT
-+/*
-+ * A command the firmware never answers marks the command manager crashed, and nothing clears that but
-+ * loading the driver again: one late answer took the radio off the network until a person or a watchdog
-+ * reloaded it. Instead, ask the USB core to reset the device (usb_queue_reset_device: the driver is
-+ * unbound, the port reset, the driver bound again and the firmware loaded afresh), back in seconds.
-+ * At most once a minute and three times in ten minutes: a chip that keeps failing is left crashed, for
-+ * whatever watches the system to deal with.
-+ *
-+ * recover_on_timeout  1 (default): reset the device on a command timeout; 0: as before, stay crashed.
-+ * fake_cmd_timeout    for testing: the next N commands count as timed out (writable at run time).
-+ * recoveries          read-only: how many resets this driver has asked for since it was loaded.
-+ * recovered_at        read-only: when the last was asked for, in seconds since boot (CLOCK_BOOTTIME, as
-+ *                     /proc/uptime), 0 if none. Whatever watches the system can stand back while it works,
-+ *                     without depending on a kernel log line that a busy log may already have overwritten.
-+ */
-+static int recover_on_timeout = 1;
-+module_param(recover_on_timeout, int, 0644);
-+MODULE_PARM_DESC(recover_on_timeout, "Reset the USB device when the firmware stops answering a command (1, default) or stay crashed (0)");
-+static int fake_cmd_timeout;
-+module_param(fake_cmd_timeout, int, 0644);
-+MODULE_PARM_DESC(fake_cmd_timeout, "Testing: count the next N commands as timed out");
-+static unsigned int recoveries;
-+module_param(recoveries, uint, 0444);
-+MODULE_PARM_DESC(recoveries, "How many device resets have been asked for on a command timeout");
-+static long recovered_at;
-+module_param(recovered_at, long, 0444);
-+MODULE_PARM_DESC(recovered_at, "When the last reset was asked for, in seconds since boot (0: none)");
-+
-+static unsigned long recover_at[3];   /* when the last three resets were asked for, in jiffies */
-+
-+static void aicwf_cmd_timeout_recover(struct rwnx_cmd_mgr *cmd_mgr)
+@@ -39,6 +39,22 @@
+            cmd->reqid, cmd->reqid != (lmac_msg_id_t)-1 ? RWNX_ID2STR(cmd->reqid) : "none");
+ }
+ 
++/* The firmware stopped answering: reset the USB device (the driver probes again and loads the firmware afresh), at
++ * most once a minute; asked again by the commands refused meanwhile. */
++static void cmd_mgr_reset_device(struct rwnx_cmd_mgr *cmd_mgr)
 +{
++#ifdef AICWF_USB_SUPPORT
 +    struct aic_usb_dev *usbdev = container_of(cmd_mgr, struct aic_usb_dev, cmd_mgr);
-+    unsigned long now = jiffies;
++    static unsigned long last;
 +
-+    if (!recover_on_timeout || !usbdev->intf)
++    if (!usbdev->intf || (last && time_before(jiffies, last + 60 * HZ)))
 +        return;
-+    if (recover_at[0] && time_before(now, recover_at[0] + 60 * HZ)) {
-+        printk(KERN_CRIT "aic8800: firmware not answering; a reset was asked for less than a minute ago\n");
-+        return;
-+    }
-+    if (recover_at[2] && time_before(now, recover_at[2] + 600 * HZ)) {
-+        printk(KERN_CRIT "aic8800: firmware not answering again: three resets in ten minutes, left crashed\n");
-+        return;
-+    }
-+    recover_at[2] = recover_at[1];
-+    recover_at[1] = recover_at[0];
-+    recover_at[0] = now;
-+    recoveries++;
-+    recovered_at = (long)ktime_get_boottime_seconds();
++    last = jiffies;
 +    printk(KERN_CRIT "aic8800: firmware not answering: resetting the device to load it afresh\n");
 +    usb_queue_reset_device(usbdev->intf);
++#endif
 +}
 +
-+static bool aicwf_fake_timeout(void)
-+{
-+    if (fake_cmd_timeout <= 0)
-+        return false;
-+    fake_cmd_timeout--;
-+    printk(KERN_CRIT "aic8800: fake_cmd_timeout: this command counts as timed out\n");
-+    return true;
-+}
-+#endif
- #endif
  /**
   *
-@@ -257,7 +322,11 @@
-         }
-         #else
-         unsigned long tout = msecs_to_jiffies(RWNX_80211_CMD_TIMEOUT_MS/*AIDEN workaround* cmd_mgr->queue_sz*/);
--        if (!wait_for_completion_killable_timeout(&cmd->complete, tout)) {
-+        if (
-+        #ifdef AICWF_USB_SUPPORT
-+            aicwf_fake_timeout() ||
-+        #endif
-+            !wait_for_completion_killable_timeout(&cmd->complete, tout)) {
-             printk(KERN_CRIT"%s cmd timed-out cmd_mgr->queue_sz:%d\n", __func__,cmd_mgr->queue_sz);
-         #ifdef AICWF_SDIO_SUPPORT
-             ret = aicwf_sdio_writeb(sdiodev, SDIOWIFI_WAKEUP_REG, 2);
-@@ -276,6 +345,9 @@
+  */
+@@ -79,6 +95,7 @@
+         printk(KERN_CRIT"cmd queue crashed\n");
+         cmd->result = -EPIPE;
+         spin_unlock_bh(&cmd_mgr->lock);
++        cmd_mgr_reset_device(cmd_mgr);
+         return -EPIPE;
+     }
+ 
+@@ -144,6 +161,7 @@
+ 				AICWFDBG(LOGERROR, "cmd queue crashed\n");
+ 				cmd->result = -EPIPE;
+ 				spin_unlock_bh(&cmd_mgr->lock);
++				cmd_mgr_reset_device(cmd_mgr);
+ 				return -EPIPE;
+ 			}
+             empty = list_empty(&cmd_mgr->cmds);
+@@ -164,6 +182,7 @@
+ 				printk(KERN_CRIT"cmd queue crashed\n");
+ 				cmd->result = -EPIPE;
+ 				spin_unlock_bh(&cmd_mgr->lock);
++				cmd_mgr_reset_device(cmd_mgr);
+ 				return -EPIPE;
+ 		}
+ 	}
+@@ -268,14 +287,18 @@
+ 
+             cmd_dump(cmd);
+             spin_lock_bh(&cmd_mgr->lock);
+-            
+             cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
++            list_del(&cmd->list);
++            cmd_mgr->queue_sz--;
++            if (cmd_mgr->queue_sz == 0)
++                rwnx_wakeup_unlock(usbdev->rwnx_hw->ws_tx);
+             if (!(cmd->flags & RWNX_CMD_FLAG_DONE)) {
+                 cmd->result = -ETIMEDOUT;
+                 cmd_complete(cmd_mgr, cmd);
              }
  			ret = -ETIMEDOUT;
              spin_unlock_bh(&cmd_mgr->lock);
-+        #ifdef AICWF_USB_SUPPORT
-+            aicwf_cmd_timeout_recover(cmd_mgr);
-+        #endif
++            cmd_mgr_reset_device(cmd_mgr);
          }
  		else{
  			spin_lock_bh(&cmd_mgr->lock);
-@@ -384,7 +456,11 @@
-             kfree(next->a2e_msg);
- 
-             tout = msecs_to_jiffies(RWNX_80211_CMD_TIMEOUT_MS * cmd_mgr->queue_sz);
--            if (!wait_for_completion_killable_timeout(&next->complete, tout)) {
-+            if (
-+            #ifdef AICWF_USB_SUPPORT
-+                aicwf_fake_timeout() ||
-+            #endif
-+                !wait_for_completion_killable_timeout(&next->complete, tout)) {
+@@ -388,13 +411,14 @@
                  printk(KERN_CRIT"%s cmd timed-out cmd_mgr->queue_sz:%d\n", __func__, cmd_mgr->queue_sz);
                  cmd_dump(next);
                  spin_lock_bh(&cmd_mgr->lock);
-@@ -395,6 +471,9 @@
-                     cmd_complete(cmd_mgr, next);
-                 }
+-                //AIDEN  workaround  
+                 cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
+-                if (!(next->flags & RWNX_CMD_FLAG_DONE)) {
+-                    next->result = -ETIMEDOUT;
+-                    cmd_complete(cmd_mgr, next);
+-                }
++                list_del(&next->list);
++                cmd_mgr->queue_sz--;
++                if (cmd_mgr->queue_sz == 0)
++                    rwnx_wakeup_unlock(usbdev->rwnx_hw->ws_tx);
                  spin_unlock_bh(&cmd_mgr->lock);
-+            #ifdef AICWF_USB_SUPPORT
-+                aicwf_cmd_timeout_recover(cmd_mgr);
-+            #endif
++                rwnx_cmd_free(next);
++                cmd_mgr_reset_device(cmd_mgr);
              } else {
  				spin_lock_bh(&cmd_mgr->lock);
  				list_del(&next->list);

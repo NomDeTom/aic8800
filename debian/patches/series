@@ -27,4 +27,5 @@ fix-linux-7.2-build.patch
 fix-sdio-per-chip-firmware-path.patch
 fix-linux-7.3-build.patch
 fix-usb-reset-on-cmd-timeout.patch
+fix-usb-scan-request-on-failure.patch
 fix-usb-quieter-logging.patch

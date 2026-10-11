@@ -1,0 +1,21 @@
+Description: aic8800_fdrv (USB): forget a scan whose command failed, so a late answer cannot finish a freed request
+Author: NomDeTom
+Forwarded: no
+Last-Update: 2026-10-11
+---
+Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
+===================================================================
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -2930,8 +2930,10 @@
+ 	}
+ 
+     rwnx_hw->scan_request = request;
+-    if ((error = rwnx_send_scanu_req(rwnx_hw, rwnx_vif, request)))
++    if ((error = rwnx_send_scanu_req(rwnx_hw, rwnx_vif, request))) {
++        rwnx_hw->scan_request = NULL;
+         return error;
++    }
+ 
+     return 0;
+ }
