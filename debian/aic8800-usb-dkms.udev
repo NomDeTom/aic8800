@@ -1,0 +1,13 @@
+# AIC8800 USB adapters first appear as a small USB drive holding a Windows driver.
+# Ejecting it switches the adapter to its WiFi mode, where aic_load_fw takes over.
+# The IDs are those of the community driver's rules (shenmintao/aic8800d80, aic.rules).
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5721", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5722", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5723", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5724", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5725", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5726", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5727", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572a", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572c", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572f", RUN+="/usr/bin/eject /dev/%k"
