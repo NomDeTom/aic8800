@@ -1,0 +1,66 @@
+Description: aic8800_fdrv (USB): after a reset for a firmware that stopped answering, reboot the whole chip before starting it
+ A USB reset leaves the chip powered, and in real stalls the firmware loaded afresh hung at its
+ first start (DBG_START_APP_REQ unanswered, the probe failed). Debug messages are still answered
+ then, so the re-probe asks the chip to reboot (HOST_START_APP_REBOOT) before anything is started;
+ the device leaves the bus and comes back, and that probe starts it clean.
+Author: NomDeTom
+Forwarded: no
+Last-Update: 2026-10-21
+---
+Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
+===================================================================
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.c
+@@ -39,6 +39,9 @@
+            cmd->reqid, cmd->reqid != (lmac_msg_id_t)-1 ? RWNX_ID2STR(cmd->reqid) : "none");
+ }
+ 
++/* Set by a reset for a firmware that stopped answering: the next probe reboots the chip first. */
++bool aicwf_reboot_chip_on_probe;
++
+ /* The firmware stopped answering: reset the USB device (the driver probes again and loads the firmware afresh), at
+  * most once a minute; asked again by the commands refused meanwhile. */
+ static void cmd_mgr_reset_device(struct rwnx_cmd_mgr *cmd_mgr)
+@@ -51,6 +54,7 @@
+         return;
+     last = jiffies;
+     printk(KERN_CRIT "aic8800: firmware not answering: resetting the device to load it afresh\n");
++    aicwf_reboot_chip_on_probe = true;
+     usb_queue_reset_device(usbdev->intf);
+ #endif
+ }
+Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.h
+===================================================================
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.h
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_cmds.h
+@@ -118,4 +118,6 @@
+ void aicwf_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len);
+ void cmd_mgr_task_process(struct work_struct *work);
+ 
++extern bool aicwf_reboot_chip_on_probe;
++
+ #endif /* _RWNX_CMDS_H_ */
+Index: aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
+===================================================================
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -8867,6 +8867,19 @@
+ 
+ int rwnx_ic_system_init(struct rwnx_hw *rwnx_hw){
+ 
++	/* On the DC and DW a USB reset leaves the chip powered and its radio as the stall left it, and the firmware loaded
++	 * afresh then hangs at its first start (2026-10-11). Before anything is started, while it still answers, reboot
++	 * the whole chip: it leaves the bus and comes back, and that probe starts it clean. (A D80 dongle restarts in
++	 * its USB-drive mode after a USB reset: already a whole reboot.) */
++	if (aicwf_reboot_chip_on_probe) {
++		aicwf_reboot_chip_on_probe = false;
++		if ((rwnx_hw->usbdev->chipid == PRODUCT_ID_AIC8800DC || rwnx_hw->usbdev->chipid == PRODUCT_ID_AIC8800DW) &&
++		    !rwnx_send_reboot(rwnx_hw)) {
++			printk(KERN_CRIT "aic8800: rebooted the chip after the reset\n");
++			return -1;
++		}
++	}
++
+ 	if(rwnx_hw->usbdev->chipid == PRODUCT_ID_AIC8801){
+ 		system_config(rwnx_hw);
+ 	}else if(rwnx_hw->usbdev->chipid == PRODUCT_ID_AIC8800DC ||

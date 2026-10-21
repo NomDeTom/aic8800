@@ -34,3 +34,4 @@ fix-usb-scan-request-on-failure.patch
 fix-usb-quieter-logging.patch
 fix-usb-add-aic-v2-8d81.patch
 fix-wiphy-netns-ok.patch
+fix-usb-reboot-chip-after-reset.patch
