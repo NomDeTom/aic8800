@@ -32,3 +32,4 @@ fix-sprintf-fw-path-overlap.patch
 fix-usb-wiphy-netns-ok.patch
 fix-usb-scan-request-on-failure.patch
 fix-usb-debug-level-logging.patch
+fix-usb-cmd-timeout-reset.patch
