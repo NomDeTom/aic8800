@@ -33,6 +33,7 @@ Section: misc
 Priority: optional
 Depends: aic8800-firmware (= ${binary:Version}),
          ${misc:Depends},
+Recommends: eject,
 Conflicts: aic8800-dkms (<< 3.0+git20240116.ec460377-1),
            aic8800-sdio-dkms,
            aic8800-pcie-dkms,

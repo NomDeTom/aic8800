@@ -1,0 +1,19 @@
+Description: aic8800_fdrv (USB): bind AIC's 368b:8d81 (the AIC8800D80 under AIC's newer vendor ID)
+ Sold as the Tenda U11 and AX913B, BrosTrend, COMFAST and others. aic_load_fw already
+ uploads its firmware, after which it comes back as 368b:8d81, which the WiFi driver's
+ table lacked (it has a69c:8d81). Matched on the vendor-specific interface alone, as the
+ a69c:8d81 entry is, so the Bluetooth interfaces stay with the Bluetooth driver.
+Author: NomDeTom
+Forwarded: no
+Last-Update: 2026-10-21
+---
+--- aic8800.orig/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.c
++++ aic8800/src/USB/driver_fw/drivers/aic8800/aic8800_fdrv/aicwf_usb.c
+@@ -2642,6 +2642,7 @@ static struct usb_device_id aicwf_usb_id_table[] = {
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D40WN, 0xff, 0xff, 0xff)},
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800DLN, 0xff, 0xff, 0xff)},
+     {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800DWN, 0xff, 0xff, 0xff)},
++    {USB_DEVICE_AND_INTERFACE_INFO(USB_VENDOR_ID_AIC_V2, USB_PRODUCT_ID_AIC8800D81, 0xff, 0xff, 0xff)},
+ #endif
+     {}
+ };
