@@ -45,3 +45,4 @@ fix-usb-state-read-never-resets.patch
 fix-usb-stall-watch-init-at-probe.patch
 fix-usb-cmd-mgr-quiesce.patch
 fix-usb-add-aic-v2-8d81.patch
+fix-usb-reset-port-entries.patch
